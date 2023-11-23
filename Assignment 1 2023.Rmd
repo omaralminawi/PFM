@@ -1,0 +1,199 @@
+---
+title: "Group assignment 1 - Measuring and testing 'quality of earnings' metrics using Compustat and XBRL data"
+author: "Omar Alminawi, Akiel Camil, Kevin Liu, Ruben Morin, Maksimilian Stajer"
+date: "11/03/2023"
+output: html_document
+---
+
+<style type="text/css">
+  body{
+  font-size: 11pt;
+}
+  blockquote{
+  font-size: 11pt;
+  font-style: italic;
+}
+  h1{
+  font-size: 20pt;
+}
+  h2{
+  font-size: 16pt;
+}
+  h3{
+  font-size: 14pt;
+}
+</style>
+
+```{r setup, include=FALSE}
+library(tidyr)
+library(dplyr)
+library(DT)
+# Options for the R-notebook
+knitr::opts_chunk$set(fig.width = 8, fig.height = 5, echo = T, warning=FALSE, message=FALSE, comment=FALSE, results = F)
+knitr::opts_knit$set(progress = TRUE, verbose = TRUE)
+```
+
+
+
+```{r results=T}
+setwd("C:/Users/Jiket/OneDrive/Desktop/UNI/Financial models/Assignment 1")
+load(file = "dataset.rda")
+head(dataset,100) %>% 
+  datatable( rownames = FALSE, options = list(pageLength = 5, scrollX=T) )
+```
+
+
+```{r results=T}
+dataset <- dataset %>% mutate(cyear = format(datadate, format="%Y")) 
+dataset %>% group_by(cyear) %>% 
+  count(., sort = F) %>% 
+  datatable( rownames = FALSE, options = list(pageLength = 5, scrollX=T) )
+dataset %>% group_by(FFindustry48) %>% 
+  count(., sort = F) %>% 
+  datatable( rownames = FALSE, options = list(pageLength = 5, scrollX=T) )
+```
+
+
+
+# Part 1
+```{r}
+library(dplyr)
+library(lubridate)
+```
+
+First we check for missing values then we set the relevant N/A values to 0 and remove missing value where we cannot set them to 0, and remove all the firms whose financial years do not end on 31.12 and have missing years.
+```{r}
+# Identify columns with any missing values
+columns_with_missing <- dataset %>% 
+  summarize_all(~any(is.na(.))) %>%
+  select_if(~any(.))
+
+# Print the names of columns with missing values
+print(names(columns_with_missing))
+
+
+dataset$am[is.na(dataset$am)] <- 0
+dataset$rectr[is.na(dataset$rectr)] <- 0
+dataset$dp[is.na(dataset$dp)] <- 0
+dataset$dlc[is.na(dataset$dlc)] <- 0
+dataset$dltt[is.na(dataset$dltt)] <- 0
+
+dataset$datadate <- as.Date(dataset$datadate, format = "%Y-%m-%d")
+
+typeof(dataset$datadate)
+
+dataset <- dataset %>% 
+  filter(month(datadate) == 12 & day(datadate) == 31)
+
+dataset$cyear <- as.numeric(dataset$cyear)
+
+dataset <- dataset %>%
+  filter(!is.na(xsga) & !is.na(oancf) & !is.na(rect) & !is.na(act) & !is.na(ppent))
+
+single_year_firms <- dataset %>%
+  group_by(conm) %>%
+  summarize(num_years = n()) %>%
+  filter(num_years == 1) %>%
+  pull(conm)
+
+firms_with_gaps <- dataset %>%
+  group_by(conm) %>%
+  filter(!all(diff(cyear) == 1)) %>%
+  pull(conm)
+
+firms_to_remove <- unique(c(single_year_firms, firms_with_gaps))
+
+data_final <- dataset %>%
+  filter(!conm %in% firms_to_remove)
+```
+Most of the missing values that were removed came from xsga.
+
+Next we will create a smaller data set with only the variables required to calculate the Beneish scores.
+
+```{r}
+beneish_data <- data_final %>%
+  select(gvkey, conm, sale, cogs, xsga, dp, am, ib, oancf, rect, act, ppent, 
+         at, dlc, dltt,cyear, datadate)
+
+# Creating new columns as needed
+# For Depreciation (excluding amortization)
+beneish_data$dp_ex_am <- beneish_data$dp - beneish_data$am
+
+# For Total Debt (short-term plus long-term)
+beneish_data$td <- beneish_data$dlc + beneish_data$dltt
+
+# Now remove the original dp, am, dlc, and dltt columns as they are no longer needed
+beneish_data <- beneish_data %>%
+  select(-dp, -am, -dlc, -dltt)
+
+# View the first few rows of the new subset
+head(beneish_data)
+```
+
+We install and load the package DescTools to winsorize the data at the 5% and 95% levels
+
+```{r}
+library(DescTools)
+
+# Check for missing values in each column
+missing_values <- beneish_data %>% 
+  summarize_all(~sum(is.na(.)))
+
+# Print the results
+print(missing_values)
+
+# List of variables to winsorize
+variables_to_winsorize <- c('sale', 'cogs', 'xsga', 'dp_ex_am', 'ib', 
+                            'oancf', 'rect', 'act', 'ppent', 'at', 'td')
+
+# Apply the Winsorize function to each variable
+beneish_data[variables_to_winsorize] <- lapply(beneish_data[variables_to_winsorize], 
+                                          function(x) Winsorize(x, 
+                                                        probs = c(0.05, 0.95)))
+```
+
+Creating the lags of the relevant variables so we can calculate the indices needed to calculate the Beneish scores.
+```{r}
+beneish_data <- arrange(beneish_data, gvkey, conm, datadate)
+
+# Calculate lags within gvkey, company name groups
+beneish_data <- beneish_data %>% group_by(gvkey, conm) %>% 
+                mutate(lsale = lag(sale, n = 1)) |> 
+                mutate(lcogs = lag(cogs, n = 1)) |> 
+                mutate(lxsga = lag(xsga, n = 1)) |> 
+                mutate(ldp_ex_am = lag(dp_ex_am, n = 1)) |> 
+                mutate(lib = lag(ib, n = 1)) |> 
+                mutate(loancf = lag(oancf, n = 1)) |> 
+                mutate(lrect = lag(rect, n = 1)) |> 
+                mutate(lact = lag(act, n = 1)) |> 
+                mutate(lppent = lag(ppent, n = 1)) |> 
+                mutate(lat = lag(at, n = 1)) |> 
+                mutate(ltd = lag(td, n = 1))
+
+```
+
+We can now calculate the indices needed for the Beneish scores, namely we calculate the Days’ Sales in Receivables Index, Gross Margin Index, Asset Quality Index, Sales Growth Index, Depreciation Index, Sales, General and Administrative expenses Index, Leverage Index, and the Accruals.
+
+```{r}
+attach(beneish_data)
+beneish_data$dsri <- (rect/sale)/(lrect/lsale)
+beneish_data$gmi <- ((1 - lcogs)/lsale)/((1-cogs)/sale)
+beneish_data$aqi <- (1 - (ppent + act/at))/(1-(lppent + lact/lat))
+beneish_data$sgi <- sale/lsale
+beneish_data$depi <- (ldp_ex_am/(ldp_ex_am+ lppent))/(dp_ex_am/(dp_ex_am+ppent))
+beneish_data$sgai <- (xsga/sale)/(lxsga/lsale)
+beneish_data$levi <- (td/at)/(ltd/lat)
+beneish_data$accruals <- (ib - oancf)/at
+detach(beneish_data)
+```
+
+I removed the labels from the dataset but this can be changed after
+```{r}
+library(labelled)
+for (var in names(beneish_data)) {
+  var_label(beneish_data[[var]]) <- NULL
+}
+
+
+```
+
