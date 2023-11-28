@@ -89,6 +89,8 @@ dataset$cyear <- as.numeric(dataset$cyear)
 
 dataset <- dataset %>%
   filter(!is.na(xsga) & !is.na(oancf) & !is.na(rect) & !is.na(act) & !is.na(ppent))
+dataset <- dataset %>%
+  filter(rect != 0)
 
 single_year_firms <- dataset %>%
   group_by(conm) %>%
@@ -130,10 +132,9 @@ beneish_data <- beneish_data %>%
 head(beneish_data)
 ```
 
-We install and load the package DescTools to winsorize the data at the 5% and 95% levels
+Check foe missing values in the new data set.
 
 ```{r}
-library(DescTools)
 
 # Check for missing values in each column
 missing_values <- beneish_data %>% 
@@ -142,14 +143,7 @@ missing_values <- beneish_data %>%
 # Print the results
 print(missing_values)
 
-# List of variables to winsorize
-variables_to_winsorize <- c('sale', 'cogs', 'xsga', 'dp_ex_am', 'ib', 
-                            'oancf', 'rect', 'act', 'ppent', 'at', 'td')
 
-# Apply the Winsorize function to each variable
-beneish_data[variables_to_winsorize] <- lapply(beneish_data[variables_to_winsorize], 
-                                          function(x) Winsorize(x, 
-                                                        probs = c(0.05, 0.95)))
 ```
 
 Creating the lags of the relevant variables so we can calculate the indices needed to calculate the Beneish scores.
@@ -187,6 +181,62 @@ beneish_data$accruals <- (ib - oancf)/at
 detach(beneish_data)
 ```
 
+Before winsorizing we first have to remove the first firm- year for all companies as the 
+indices cannot be calculated for the first year of a company's data.
+The N/A values for levi can be set to 1, as the firm has no debt.
+Because some companies have values of 0 for depreciation, 
+we will set the N/A values for depi to the mean depi of each company.
+
+```{r}
+
+# Check for missing values in each column
+missing_values <- beneish_data %>% 
+  summarize_all(~sum(is.na(.)))
+
+# Print the results
+print(missing_values)
+
+missing_values_per_column <- colSums(is.na(beneish_data))
+missing_values_per_column
+
+# Remove the first firm-year for each company as due to lags the inidices
+# cannot be calculated for the first year of a company's data. We choose
+# to filter by one of the lags to remove all the N/A values that appeared
+# due to the lags.
+beneish_data <- beneish_data %>%
+  filter(!is.na(lsale))
+
+missing_values_per_column <- colSums(is.na(beneish_data))
+missing_values_per_column
+
+# We can deal with N/A values in levi by setting to 1
+
+beneish_data$levi[is.na(beneish_data$levi)] <- 1
+
+missing_values_per_column <- colSums(is.na(beneish_data))
+missing_values_per_column
+
+checkdata <- beneish_data %>%
+  filter(is.na(aqi))
+
+
+beneish_data <- beneish_data %>%
+  group_by(gvkey) %>%
+  mutate(depi = ifelse(is.na(depi), mean(depi, na.rm = TRUE), depi))
+
+# Putting the remaining values to 1, as the firm has no depreciation
+
+beneish_data$depi[is.na(beneish_data$depi)] <- 1
+
+# Setting the remaining AQI N/A value to Inf and letting the winsorize function
+# deal with it. The firms have total assets equal to current assets therefore
+# the AQI cannot be calculated for these firms.
+
+beneish_data$aqi[is.na(beneish_data$aqi)] <- Inf
+```
+
+
+
 I removed the labels from the dataset but this can be changed after
 ```{r}
 library(labelled)
@@ -195,5 +245,29 @@ for (var in names(beneish_data)) {
 }
 
 
+```
+
+
+We install and load the package DescTools to winsorize the indices at the 5% and 95% levels,
+```{r}
+library(DescTools)
+
+# List of variables to winsorize
+variables_to_winsorize <- c('dsri', 'gmi', 'aqi', 'sgi', 'depi', 'sgai', 
+                            'levi', 'accruals')
+# Apply the Winsorize function to each variable
+beneish_data[variables_to_winsorize] <- lapply(beneish_data[variables_to_winsorize], 
+                                          function(x) Winsorize(x, 
+                                                        probs = c(0.05, 0.95)))
+```
+
+
+Finally we can calculate the Beneish scores and add them to the dataset.
+
+```{r}
+attach(beneish_data)
+beneish_data$bm <- -4.84 + 0.92 * dsri + 0.528 * gmi + 0.404 * aqi - 0.892 *
+  sgi + 0.115 * depi - 0.172 * sgai + 4.679 * accruals - 0.327 * levi
+detach(beneish_data)
 ```
 
