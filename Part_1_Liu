@@ -83,3 +83,13 @@ summary(regression_model)
 
 stargazer(regression_model)
 
+
+
+## QUESTION 3
+# The Beneish M-score demonstrates moderate efficacy as an earnings quality metric. 
+# In the regression analysis, its significant coefficient suggests some degree of influence on profitability persistence, 
+# indicating its utility in capturing aspects of earnings quality. 
+# However, its primary focus remains on detecting earnings manipulation rather than assessing earnings sustainability directly. 
+# While useful for flagging potential accounting irregularities, the M-score should be complemented with other financial indicators 
+# to more comprehensively evaluate the quality of earnings. Its role is more aligned with a diagnostic tool in financial analysis rather 
+# than a standalone measure of earnings quality.
