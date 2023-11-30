@@ -1,0 +1,85 @@
+## QUESTION 1
+# Load libraries
+library(dplyr)
+library(zoo)
+
+# Sorting the dataset by firm and date
+dataset <- arrange(dataset, gvkey, datadate)
+
+# Calculating the lagged variables
+dataset <- dataset %>%
+  group_by(gvkey) %>%
+  mutate(
+    sale_lag = lag(sale),
+    rect_lag = lag(rect),
+    cogs_lag = lag(cogs),
+    act_lag = lag(act),
+    ppent_lag = lag(ppent),
+    at_lag = lag(at),
+    dlc_lag = lag(dlc),
+    dltt_lag = lag(dltt)
+  )
+
+# Calculating the Beneish M-score components
+dataset <- dataset %>%
+  mutate(
+    DSRI = (rect / sale) / (rect_lag / sale_lag),
+    GMI = ((sale - cogs) / sale) / ((sale_lag - cogs_lag) / sale_lag),
+    AQI = (1 - (ppent / at)) / (1 - (ppent_lag / at_lag)),
+    SGI = sale / sale_lag,
+    DEPI = (dp / ppent_lag) / (dp / ppent),
+    SGAI = (xsga / sale) / (xsga / sale_lag),
+    LVGI = ((dlc + dltt) / at) / ((dlc_lag + dltt_lag) / at_lag),
+    TATA = (ib - oancf) / at
+  )
+
+# Winsorizing the indices at the 5th and 95th percentiles
+winsorize <- function(x) {
+  quantiles <- quantile(x, probs = c(0.05, 0.95), na.rm = TRUE)
+  pmax(pmin(x, quantiles[2]), quantiles[1])
+}
+
+dataset$DSRI <- winsorize(dataset$DSRI)
+dataset$GMI <- winsorize(dataset$GMI)
+dataset$AQI <- winsorize(dataset$AQI)
+dataset$SGI <- winsorize(dataset$SGI)
+dataset$DEPI <- winsorize(dataset$DEPI)
+dataset$SGAI <- winsorize(dataset$SGAI)
+dataset$LVGI <- winsorize(dataset$LVGI)
+dataset$TATA <- winsorize(dataset$TATA)
+
+# Calculating the M-score
+dataset <- dataset %>%
+  mutate(
+    M_score = -4.84 + 0.92 * DSRI + 0.528 * GMI + 0.404 * AQI + 0.892 * SGI +
+      0.115 * DEPI - 0.172 * SGAI + 4.679 * TATA - 0.327 * LVGI
+  )
+
+# Viewing the first few rows with the M-score and selected columns
+head(select(dataset, gvkey, datadate, DSRI, GMI, AQI, SGI, DEPI, SGAI, LVGI, TATA, M_score))
+
+
+## QUESTION 2
+# Load necessary libraries
+library(dplyr)
+
+# Ensure dataset is sorted by company and date
+dataset <- arrange(dataset, gvkey, datadate)
+
+# Calculating ROA and lagged ROA, and replacing NA values with 0
+dataset <- dataset %>%
+  mutate(
+    ROA = ifelse(is.na(ib / at), 0, ib / at),        # Calculate ROA, replace NA with 0
+    lag_ROA = lag(ROA),                              # Calculate lagged ROA
+    lag_ROA = ifelse(is.na(lag_ROA), 0, lag_ROA),    # Replace NA in lag_ROA with 0
+    M_score = ifelse(is.na(M_score), 0, M_score)     # Replace NA in M_score with 0
+  )
+
+# Regression analysis
+regression_model <- lm(ROA ~ lag_ROA + M_score, data = dataset)
+
+# Summary of regression analysis
+summary(regression_model)
+
+stargazer(regression_model)
+
