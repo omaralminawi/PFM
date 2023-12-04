@@ -1,0 +1,301 @@
+ ---
+title: "PFM A#1"
+author: "Mohammed Rakeen Akiel Camil"
+date: "2023-11-18"
+output: html_document
+---
+
+
+# Load Data
+```{r}
+setwd('/Users/akiel/Desktop/BAM/B2/PFM')
+library(tidyr)
+library(dplyr)
+library(data.table)
+library(stringr)
+#unziping files
+#change ./ to .\\ for windows, I am on mac so im using ./
+#for(year in 2014:2023) {
+#  utils::unzip(paste0(year, "q1.zip"), exdir = paste0("./", year, "q1"))
+#  utils::unzip(paste0(year, "q2.zip"), exdir = paste0("./", year, "q2"))
+#}
+```
+# Requirements
+NOTES:
+- I still do not know what comparative figures mean. 
+
+We want to create a data frame that includes companies that (REQUIREMENTS):
+
+- 10-K only fillings `sub`
+- entities incorpoarted (`countryinc`) in the US
+- has december as the end of the fiscal year (`fye`)
+- SIC code between 1000 - 5999 or 7000 - 7000 (`sic`)
+- contains data for fiscal years ending in the years 2013 till 2022. (`fy`)
+- contains only values that (1) are US dollar-denominated `uom`, 
+- are not on a per-share basis, `tag` not containing 'PerShare'
+- are US-GAAP or IFRS (taxonomy) compliant (i.e., not company-specific) `tag` != `adsh`,
+- represent ‘flows’ for 4 quarters or ‘balances’ for the end of the year `qtrs == 0`, and
+- for which coreg = ““ `coreg`.
+```{r echo = T, results = 'hide'}
+sub2020q1 <- read.table("./2020q1/sub.txt", sep = '\t', 
+                        header = TRUE, fill = TRUE, fileEncoding = "UTF-8", stringsAsFactors = FALSE, 
+                        quote="\"", comment.char = "")
+num2020q1 <- read.table("./2020q1/num.txt", sep = '\t', header = TRUE, fill = TRUE, 
+                        quote="\"", comment.char = "") %>% filter(coreg == "")
+
+```
+
+```{r echo = T, results = 'hide'}
+#Requirement 1 Country incorporated US
+sub2020q1[sub2020q1$countryinc == 'US',]
+#Requirement 2: fiscal year end December 31
+sub2020q1[sub2020q1$fye == 1231,]
+#Requirement 3: SIC Code 
+sub2020q1[(sub2020q1$sic <= 6000 & sub2020q1$sic > 6999), ]
+#Requirement 4: 
+sub2020q1[(sub2020q1$fy >= 2013 & sub2020q1$fy <= 2022), ]
+#Requirement 5: USD 
+num2020q1 |>
+  count(uom)
+num2020q1[num2020q1$uom == 'USD', ]
+#Requirement 6: Not on pershare basis 
+num2020q1[!str_detect(num2020q1$tag, 'PerShare'),]
+#Requirement 7: the readme document said that if this condition is satisfied
+#it means that the entry is US-GAAP or IFRS compliant
+num2020q1[(num2020q1$version != num2020q1$adsh),]
+#Requirement 8: qtrs in num == 0 
+num2020q1[num2020q1$qtrs == 4,]
+#Requirement 9: coreg == ''
+num2020q1[num2020q1$coreg == '',]
+```
+
+This is the general requirements that the data frame needs to satisfy. 
+The next step would be to create a function that intergates both the num and the 
+sub data frames. Such that we get a data frame that intergrates all the mentioned 
+requirement. 
+
+The final sub data will get us the unique list of firms (based on adsh codes) that
+satisfies the first 3 requirements.
+An example of a series of code that can be used in the input for the final for loop
+would be 
+```{r}
+temp_sub = sub2020q1
+cond_1_4 = (
+            (temp_sub$form =='10-K') &
+            (temp_sub$countryinc =='US') &
+            (temp_sub$fye == 1231) &
+            (!(temp_sub$sic >= 6000 & temp_sub$sic < 6999))
+            )
+temp_sub = sub2020q1[cond_1_4, ]
+```
+Based on these checks we conclude that requirement 1-3 is satisfied. 
+Now we check requirements 5-9
+```{r}
+temp_num = num2020q1
+cond_5_9 = (
+            (!str_detect(temp_num$tag, 'PerShare')) &
+            (temp_num$uom =='USD') &
+            (temp_num$version != temp_num$adsh) &
+            (temp_num$qtrs == 4) &
+            (temp_num$coreg == '')
+            )
+temp_num = temp_num[cond_5_9, ]
+
+```
+# Loading and Merging the data set 
+## num file
+We load the num files into a single data frame by loading all the text files 
+apending them into one data frame
+```{r}
+years <- seq(2014, 2023)
+quarters <- c('q1','q2')
+# Define column names
+column_names <- c("adsh", "tag", "version", "coreg", "ddate", "qtrs", "uom", "value", "footnote")
+
+# Initialize an empty data frame with the column names of the num.txt file 
+df <- data.frame(matrix(ncol = length(column_names)))
+colnames(df) <- column_names
+
+# Loop through each year and append data frames
+for (i in years) {
+  for (j in quarters) {
+  temp <- read.table(paste0('./',i, j, "/num.txt"), sep = '\t', col.names = column_names
+                     , header = TRUE, fill = TRUE, quote="\"", comment.char = "")
+  df <- rbind(df, temp)
+  }
+}
+# Reset row names
+rownames(df) <- NULL
+```
+Now we start with applying the previously defined conditions 5-9
+```{r}
+cond_5_9 = (
+            (!str_detect(df$tag, 'PerShare')) &
+            (df$uom =='USD') &
+            (df$version != df$adsh) &
+            (df$qtrs == 4) &
+            (df$coreg == '')
+            )
+fin_df = df[cond_5_9,]
+fin_df = na.omit(fin_df)
+fin_df_distinct <- fin_df %>%
+    distinct(across(-version))
+
+```
+## sub file 
+```{r}
+years <- seq(2014, 2023)
+quarters <- c('q1','q2')
+
+#define column names
+col_names_sub <- c("adsh", "cik", "name", "sic", "countryba", "stprba", "cityba", 
+                 "zipba", "bas1", "bas2", "baph", "countryma", "stprma", "cityma", 
+                 "zipma", "mas1", "mas2", "countryinc", "stprinc", "ein", "former", 
+                 "changed", "afs", "wksi", "fye", "form", "period", "fy", 
+                 "fp", "filed", "accepted", "prevrpt", "detail", "instance", "nciks", 
+                 "aciks")
+# Initialize an empty data frame with the column names of the num.txt file 
+df_sub <- data.frame(matrix(ncol = length(col_names_sub)))
+colnames(df_sub) <- col_names_sub
+
+# Loop through each year and append data frames
+for (i in years) {
+  for (j in quarters) {
+  temp <- read.table(paste0('./',i, j, "/sub.txt"), sep = '\t', col.names = col_names_sub,
+                        header = TRUE, fill = TRUE, fileEncoding = "UTF-8", stringsAsFactors = FALSE,
+                        quote="\"", comment.char = "")
+  df_sub <- rbind(df_sub, temp)
+  }
+}
+#remove first two rows because its and error (should've done header = TRUE, will 
+# do in the next run)
+#df <- df[3:nrow(df), ]
+# Reset row names
+rownames(df_sub) <- NULL
+```
+Add conditions to df_sub
+```{r}
+cond_1_4 = (
+            (df_sub$form == '10-K') &
+            (df_sub$countryinc =='US') &
+            (df_sub$fye == 1231) &
+            (!(df_sub$sic >= 6000 & df_sub$sic < 6999)) &
+            (df_sub$fy >= 2013 & df_sub$fy <= 2022)
+            )
+fin_df_sub = df_sub[cond_1_4, ]
+```
+# Merging and getting relevant variables 
+This is the list of variables that we need to get
+adsh, cik, name, period, tag, ddate, and value
+```{r}
+colnames(fin_df_sub)
+```
+we can see that 'adsh', 'cik', and  'name' are the relevant columns here
+```{r}
+fin_df_sub_filter = fin_df_sub[,c('adsh','cik','name')]
+```
+
+```{r}
+colnames(fin_df) 
+```
+We will take 'adsh', 'tag', 'ddate', and 'value' from this data frame
+```{r}
+fin_df_num_filter = fin_df_distinct[,c('adsh', 'tag', 'ddate', 'value')]
+```
+
+Now we need to merge these two data sets on 'adsh'. the num data set will be used
+on the left and we will do a left join, such that we maintain all rows within the
+num data frame. 
+```{r}
+merge_df <- merge(fin_df_num_filter, fin_df_sub_filter, by = 'adsh', all.x = TRUE)
+#merge_df_nona <- na.omit(merge_df)
+```
+We need to also satisfy these two conditons:
+- Within a specific year, the tag is available for at least 10 percent of the firms
+- After removing the tags that do not comply with 1, the tag is available for at least 5 out of 10 years in the 2013 - 2022 period.
+```{r}
+# Convert 'ddate' to year
+merge_df$year <- as.integer(format(as.Date(as.character(merge_df$ddate), "%Y%m%d"), "%Y"))
+
+# Initialize an empty list to store results for each year
+results <- list()
+
+# Loop through each year from 2013 to 2022
+for (year in 2013:2022) {
+  # Filter data for the specific year
+  data_filtered_year <- filter(merge_df, year == year)
+
+  # Count the number of unique firms for each tag
+  tag_count <- data_filtered_year %>%
+    group_by(tag) %>%
+    summarise(firms_count = n_distinct(cik))
+
+  # Calculate the total number of unique firms in that year
+  total_firms <- n_distinct(data_filtered_year$cik)
+
+  # Determine tags with at least 10% representation
+  tags_10_percent <- filter(tag_count, firms_count >= 0.1 * total_firms)
+
+  # Store the result for the year
+  results[[as.character(year)]] <- tags_10_percent
+}
+
+# View the results
+results
+```
+```{r}
+library(purrr)
+library(stringr)
+
+# Add a year column to each data frame in the list
+results_with_year <- lapply(2013:2022, function(year) {
+  data_frame <- results[[as.character(year)]]
+  data_frame$year <- year
+  return(data_frame)
+})
+
+# Combine all the data frames into one
+tags_df <- bind_rows(results_with_year)
+
+# Filter merged_df based on the tags and years from tags_df
+filtered_merged_df <- merge_df %>%
+  semi_join(tags_df, by = c("tag", "year"))
+
+# View the filtered data frame
+head(filtered_merged_df)
+```
+This is to get tags that are available in at least 5 out of the 10 years 
+```{r}
+# Filter the merged_df for the years 2013 - 2022
+merged_df_filtered_years <- filter(filtered_merged_df, year >= 2013 & year <= 2022)
+
+# Count the occurrence of each tag across the years
+tag_year_count <- merged_df_filtered_years %>%
+  group_by(tag) %>%
+  summarise(years_count = n_distinct(year))
+
+# Filter for tags that are available in at least 5 out of the 10 years
+tags_in_5_years <- filter(tag_year_count, years_count >= 5)
+
+# Now, filter the original merged_df to include only those tags
+filtered_merged_df <- filtered_merged_df %>%
+  filter(tag %in% tags_in_5_years$tag)
+
+# View the filtered data frame
+head(filtered_merged_df)
+```
+
+This is for changing to wide
+```{r}
+filtered_merged_df_nona <- na.omit(filtered_merged_df)
+filtered_merged_df_wide <- filtered_merged_df_nona%>% 
+  spread(key = tag, value = value)
+```
+```{r}
+filtered_merged_df_wide <- filtered_merged_df_wide[substr(filtered_merged_df_wide$ddate, 5, nchar(filtered_merged_df_wide$ddate)) == 1231, ]
+```
+
+
+
+
+
