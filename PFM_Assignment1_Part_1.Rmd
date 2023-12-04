@@ -37,19 +37,12 @@ knitr::opts_knit$set(progress = TRUE, verbose = TRUE)
 
 ```{r results=T}
 load(file = "dataset.rda")
-head(dataset,100) %>% 
-  datatable( rownames = FALSE, options = list(pageLength = 5, scrollX=T) )
 ```
 
 
 ```{r results=T}
 dataset <- dataset %>% mutate(cyear = format(datadate, format="%Y")) 
-dataset %>% group_by(cyear) %>% 
-  count(., sort = F) %>% 
-  datatable( rownames = FALSE, options = list(pageLength = 5, scrollX=T) )
-dataset %>% group_by(FFindustry48) %>% 
-  count(., sort = F) %>% 
-  datatable( rownames = FALSE, options = list(pageLength = 5, scrollX=T) )
+
 ```
 
 
@@ -86,26 +79,28 @@ dataset <- dataset %>%
 
 dataset$cyear <- as.numeric(dataset$cyear)
 
-dataset <- dataset %>%
-  filter(!is.na(xsga) & !is.na(oancf) & !is.na(rect) & !is.na(act) & !is.na(ppent))
-dataset <- dataset %>%
-  filter(rect != 0)
+# dataset <- dataset %>%
+#  filter(!is.na(xsga) & !is.na(oancf) & !is.na(rect) & !is.na(act) & !is.na(ppent))
+#dataset <- dataset %>%
+#  filter(rect != 0)
 
 single_year_firms <- dataset %>%
-  group_by(conm) %>%
+  group_by(gvkey) %>%
   summarize(num_years = n()) %>%
   filter(num_years == 1) %>%
-  pull(conm)
+  pull(gvkey)
 
 firms_with_gaps <- dataset %>%
-  group_by(conm) %>%
+  arrange(gvkey, datadate) |> 
+  group_by(gvkey) %>%
   filter(!all(diff(cyear) == 1)) %>%
-  pull(conm)
+  pull(gvkey)
+
 
 firms_to_remove <- unique(c(single_year_firms, firms_with_gaps))
 
 data_final <- dataset %>%
-  filter(!conm %in% firms_to_remove)
+  filter(!gvkey %in% firms_to_remove)
 ```
 Most of the missing values that were removed came from xsga.
 
@@ -131,7 +126,7 @@ beneish_data <- beneish_data %>%
 head(beneish_data)
 ```
 
-Check foe missing values in the new data set.
+Check for missing values in the new data set.
 
 ```{r}
 
@@ -208,18 +203,14 @@ missing_values_per_column
 beneish_data <- beneish_data %>%
   filter(!is.na(lsale))
 
-missing_values_per_column <- colSums(is.na(beneish_data))
-missing_values_per_column
 
 # We can deal with N/A values in levi by setting to 1
 
-beneish_data$levi[is.na(beneish_data$levi)] <- 1
+beneish_data$levi[is.na(beneish_data$levi) & beneish_data$td == 0] <- 1
 
-missing_values_per_column <- colSums(is.na(beneish_data))
-missing_values_per_column
 
 checkdata <- beneish_data %>%
-  filter(is.na(aqi))
+  filter(is.na(levi))
 
 
 beneish_data <- beneish_data %>%
@@ -258,9 +249,9 @@ library(DescTools)
 variables_to_winsorize <- c('dsri', 'gmi', 'aqi', 'sgi', 'depi', 'sgai', 
                             'levi', 'accruals')
 # Apply the Winsorize function to each variable
-beneish_data[variables_to_winsorize] <- lapply(beneish_data[variables_to_winsorize], 
+beneish_data[variables_to_winsorize] <- lapply(beneish_data[variables_to_winsorize],
                                           function(x) Winsorize(x, 
-                                                        probs = c(0.05, 0.95)))
+                                                        probs = c(0.05, 0.95), na.rm = TRUE))
 ```
 
 
@@ -268,15 +259,19 @@ Finally we can calculate the Beneish scores and add them to the dataset.
 
 ```{r}
 attach(beneish_data)
-beneish_data$bm <- -4.84 + 0.92 * dsri + 0.528 * gmi + 0.404 * aqi - 0.892 *
-  sgi + 0.115 * depi - 0.172 * sgai + 4.679 * accruals - 0.327 * levi
+beneish_data$bm <- (-4.84) + (0.92 * dsri) + (0.528 * gmi) + (0.404 * aqi) - (0.892 * sgi) + (0.115 * depi) - (0.172 * sgai) + (4.679 * accruals) - (0.327 * levi)
 detach(beneish_data)
+
+suspectmanipulation <- beneish_data %>%
+  filter(bm > -1.78)
 ```
 
 Next we show the explanatory power of the calculated M-score on profitability persistence
 
 ```{r}
-# Define ROE in the data
+# Winsorize ROE and lROE at the 1% and 99% levels
+# beneish_data$roe <- Winsorize(beneish_data$roe, probs = c(0.01, 0.99))
+# beneish_data$lroe <- Winsorize(beneish_data$lroe, probs = c(0.01, 0.99),na.rm = TRUE)
 
 
 mdl <- roe ~ bm + lroe + bm:lroe
