@@ -96,6 +96,10 @@ firms_with_gaps <- dataset %>%
   filter(!all(diff(cyear) == 1)) %>%
   pull(gvkey)
 
+check <- dataset %>%
+  group_by(conm) %>%
+  filter(n_distinct(gvkey) > 1) %>%               
+  summarise(different_gvkeys = list(unique(gvkey)))
 
 firms_to_remove <- unique(c(single_year_firms, firms_with_gaps))
 
@@ -217,9 +221,6 @@ beneish_data <- beneish_data %>%
   group_by(gvkey) %>%
   mutate(depi = ifelse(is.na(depi), mean(depi, na.rm = TRUE), depi))
 
-# Putting the remaining values to 1, as the firm has no depreciation
-
-beneish_data$depi[is.na(beneish_data$depi)] <- 1
 
 # Setting the remaining AQI N/A value to Inf and letting the winsorize function
 # deal with it. The firms have total assets equal to current assets therefore
@@ -230,7 +231,6 @@ beneish_data$aqi[is.na(beneish_data$aqi)] <- Inf
 
 
 
-I removed the labels from the dataset but this can be changed after
 ```{r}
 library(labelled)
 for (var in names(beneish_data)) {
@@ -254,6 +254,22 @@ beneish_data[variables_to_winsorize] <- lapply(beneish_data[variables_to_winsori
                                                         probs = c(0.05, 0.95), na.rm = TRUE))
 ```
 
+Because of the removal of the first firm-year for each company, some companies now have only one year of data and some missing values.
+```{r}
+
+single_year_firms <- beneish_data %>%
+  group_by(gvkey) %>%
+  summarize(num_years = n()) %>%
+  filter(num_years == 1) %>%
+  pull(gvkey)
+
+firms_with_gaps <- beneish_data %>%
+  arrange(gvkey, datadate) |> 
+  group_by(gvkey) %>%
+  filter(!all(diff(cyear) == 1)) %>%
+  pull(gvkey)
+```
+
 
 Finally we can calculate the Beneish scores and add them to the dataset.
 
@@ -269,10 +285,6 @@ suspectmanipulation <- beneish_data %>%
 Next we show the explanatory power of the calculated M-score on profitability persistence
 
 ```{r}
-# Winsorize ROE and lROE at the 1% and 99% levels
-# beneish_data$roe <- Winsorize(beneish_data$roe, probs = c(0.01, 0.99))
-# beneish_data$lroe <- Winsorize(beneish_data$lroe, probs = c(0.01, 0.99),na.rm = TRUE)
-
 
 mdl <- roe ~ bm + lroe + bm:lroe
 
