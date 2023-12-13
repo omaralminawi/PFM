@@ -171,7 +171,7 @@ of the Beneish scores on explaining persistence in ROE.
 attach(beneish_data)
 beneish_data$dsri <- (rect/sale)/(lrect/lsale)
 beneish_data$gmi <- ((1 - lcogs)/lsale)/((1-cogs)/sale)
-beneish_data$aqi <- (1 - (ppent + act/at))/(1-(lppent + lact/lat))
+beneish_data$aqi <- (1 - (ppent + act)/at)/(1-(lppent + lact)/lat)
 beneish_data$sgi <- sale/lsale
 beneish_data$depi <- (ldp_ex_am/(ldp_ex_am+ lppent))/(dp_ex_am/(dp_ex_am+ppent))
 beneish_data$sgai <- (xsga/sale)/(lxsga/lsale)
