@@ -113,7 +113,7 @@ Next we will create a smaller data set with only the variables required to calcu
 ```{r}
 beneish_data <- data_final %>%
   select(gvkey, conm, sale, cogs, xsga, dp, am, ib, oancf, rect, act, ppent, 
-         at, dlc, dltt,cyear, datadate)
+         at,lct, dlc, dltt,cyear, datadate)
 
 # Creating new columns as needed
 # For Depreciation (excluding amortization)
@@ -160,7 +160,8 @@ beneish_data <- beneish_data %>% group_by(gvkey, conm) %>%
                 mutate(lact = lag(act, n = 1)) |> 
                 mutate(lppent = lag(ppent, n = 1)) |> 
                 mutate(lat = lag(at, n = 1)) |> 
-                mutate(ltd = lag(td, n = 1))
+                mutate(ltd = lag(td, n = 1)) |> 
+                mutate(llct = lag(lct, n = 1))
 
 ```
 
@@ -171,14 +172,14 @@ of the Beneish scores on explaining persistence in ROE.
 attach(beneish_data)
 beneish_data$dsri <- (rect/sale)/(lrect/lsale)
 beneish_data$gmi <- ((1 - lcogs)/lsale)/((1-cogs)/sale)
-beneish_data$aqi <- (1 - (ppent + act)/at)/(1-(lppent + lact)/lat)
+beneish_data$aqi <- (1 - ((ppent + act)/at))/(1-((lppent + lact)/lat))
 beneish_data$sgi <- sale/lsale
 beneish_data$depi <- (ldp_ex_am/(ldp_ex_am+ lppent))/(dp_ex_am/(dp_ex_am+ppent))
 beneish_data$sgai <- (xsga/sale)/(lxsga/lsale)
 beneish_data$levi <- (td/at)/(ltd/lat)
 beneish_data$accruals <- (ib - oancf)/at
-beneish_data$roe <- ib / at
-beneish_data$lroe <- lib/lat
+beneish_data$rnoe <- ib / (act + ppent - lct)
+beneish_data$lrnoe <- lib/(lact + lppent - llct)
 detach(beneish_data)
 ```
 
@@ -282,20 +283,51 @@ suspectmanipulation <- beneish_data %>%
   filter(bm > -1.78)
 ```
 
+Scaling the bm variable to range between 0 and 1 and calculating decile ranks by year.  
+
+```{r}
+beneish_data <- beneish_data %>% group_by(cyear) %>% 
+                mutate(deca = ntile(bm, 10)) # Calculate decile ranks by year
+beneish_data$decascaled <- (beneish_data$deca-1)/9  # Scale decile ranks to range between 0 and 1
+```
+
+Filter the N/A values for the decile ranks and the scaled decile ranks
+
+```{r}
+
+beneish_data <- beneish_data %>%
+  filter(!is.na(bm))
+
+```
+
+
+
 Next we show the explanatory power of the calculated M-score on profitability persistence
 
 ```{r}
 
-mdl <- roe ~ bm + lroe + bm:lroe
+mdl <- rnoe ~ bm + lrnoe + bm:lroe
+mdlb <- rnoe ~ decascaled + lrnoe + decascaled:lroe
 
 posroedata <- beneish_data %>%
-  filter(roe > 0) |> 
-  filter(lroe > 0)
+  filter(rnoe > 0) |> 
+  filter(lrnoe > 0)
+
+posroedata[posroedata == Inf] <- NA
+posroedata[posroedata == -Inf] <- NA
+
+posroedata <- na.omit(posroedata)
+
 rslt <- lm(mdl, data = posroedata)
+rslt2 <- lm(mdlb, data = posroedata)
 summary(rslt)
+summary(rslt2)
+
 
 results <- list()
 r2results <- list()
+
+
 
 for (year in 2014:2022) {
     # Subset the data for the specific year
